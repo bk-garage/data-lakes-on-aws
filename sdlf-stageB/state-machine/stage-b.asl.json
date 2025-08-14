@@ -72,33 +72,13 @@
                 {
                   "Variable": "$.body.glue.crawler_response.Crawler.State",
                   "StringEquals": "READY",
-                  "Next": "Post-update Catalog"
+                  "Next": "Success"
                 }
               ],
               "Default": "Wait X Seconds"
             },
-            "Post-update Catalog": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "ResultPath": null,
-              "Parameters": {
-                "Payload.$": "$",
-                "FunctionName": "${lStep3}:$LATEST"
-              },
-              "Retry": [
-                {
-                  "ErrorEquals": [
-                    "Lambda.ServiceException",
-                    "Lambda.AWSLambdaException",
-                    "Lambda.SdkClientException",
-                    "Lambda.TooManyRequestsException"
-                  ],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 6,
-                  "BackoffRate": 2
-                }
-              ],
-              "End": true
+            "Success": {
+              "Type": "Succeed"
             }
           }
         }

@@ -1,28 +1,22 @@
 import json
 from pathlib import PurePath
 
-from datalake_library import octagon
+from datalake_library import DataLakeClient
 from datalake_library.commons import init_logger
-from datalake_library.configuration.resource_configs import (
-    KMSConfiguration,
-    S3Configuration,
-)
-from datalake_library.interfaces.s3_interface import S3Interface
-from datalake_library.octagon import peh
 
 logger = init_logger(__name__)
 
 
 def transform_object(bucket, key, team, dataset):
-    s3_interface = S3Interface()
-    # IMPORTANT: Stage bucket where transformed data must be uploaded
-    stage_bucket = S3Configuration().stage_bucket
-    # Download S3 object locally to /tmp directory
-    # The s3_helper.download_object method
-    # returns the local path where the file was saved
-    local_path = s3_interface.download_object(bucket, key)
+    # Initialize data lake client with team/dataset/stage parameters
+    client = DataLakeClient(team=team, dataset=dataset, stage="a")
 
-    # Apply business business logic:
+    # IMPORTANT: Stage bucket where transformed data must be uploaded
+    stage_bucket = client.s3.stage_bucket
+    # Download S3 object locally to /tmp directory
+    local_path = client.s3.download_object(bucket, key)
+
+    # Apply business logic:
     # Below example is opening a JSON file and
     # extracting fields, then saving the file
     # locally and re-uploading to Stage bucket
@@ -34,7 +28,6 @@ def transform_object(bucket, key, team, dataset):
                 if type(d[k]) in [dict, list]:
                     o.pop(k)
             l.append(o)
-
         return l
 
     # Reading file locally
@@ -52,8 +45,9 @@ def transform_object(bucket, key, team, dataset):
     # IMPORTANT: Build the output s3_path without the s3://stage-bucket/
     s3_path = f"pre-stage/{team}/{dataset}/{PurePath(output_path).name}"
     # IMPORTANT: Notice "stage_bucket" not "bucket"
-    kms_key = KMSConfiguration(team).get_kms_arn
-    s3_interface.upload_object(output_path, stage_bucket, s3_path, kms_key=kms_key)
+    # you can select kms_key = client.kms.data_kms_key => to use the datalake domain data key
+    # or use the particular team kms_key = client.kms.team_data_kms_key
+    client.s3.upload_object(output_path, stage_bucket, s3_path, kms_key=client.kms.team_data_kms_key)
     # IMPORTANT S3 path(s) must be stored in a list
     processed_keys = [s3_path]
 
@@ -79,30 +73,17 @@ def lambda_handler(event, context):
     """
     try:
         logger.info("Fetching event data from previous step")
-        bucket = event["body"]["bucket"]
-        key = event["body"]["key"]
-        team = event["body"]["team"]
-        stage = event["body"]["pipeline_stage"]
-        dataset = event["body"]["dataset"]
+        bucket = event["bucket"]
+        key = event["key"]
+        team = event["team"]
+        dataset = event["dataset"]
 
-        logger.info("Initializing Octagon client")
-        component = context.function_name.split("-")[-2].title()
-        octagon_client = (
-            octagon.OctagonClient().with_run_lambda(True).with_configuration_instance(event["body"]["env"]).build()
-        )
-        peh.PipelineExecutionHistoryAPI(octagon_client).retrieve_pipeline_execution(event["body"]["peh_id"])
-
-        # Call custom transform created by user and process the file
         logger.info("Calling user custom processing code")
-        event["body"]["processedKeys"] = transform_object(bucket, key, team, dataset)
-        octagon_client.update_pipeline_execution(
-            status="{} {} Processing".format(stage, component), component=component
-        )
+        event["processedKeys"] = transform_object(bucket, key, team, dataset)
+        logger.info("Successfully processed object")
+
     except Exception as e:
         logger.error("Fatal error", exc_info=True)
-        octagon_client.end_pipeline_execution_failed(
-            component=component,
-            issue_comment="{} {} Error: {}".format(stage, component, repr(e)),
-        )
         raise e
+
     return event

@@ -1,10 +1,8 @@
 import json
 import os
 
+from datalake_library import DataLakeClient
 from datalake_library.commons import init_logger
-from datalake_library.configuration.resource_configs import SQSConfiguration, StateMachineConfiguration
-from datalake_library.interfaces.sqs_interface import SQSInterface
-from datalake_library.interfaces.states_interface import StatesInterface
 
 logger = init_logger(__name__)
 
@@ -14,13 +12,12 @@ def lambda_handler(event, context):
         team = os.environ["TEAM"]
         pipeline = os.environ["PIPELINE"]
         stage = os.environ["STAGE"]
-        state_config = StateMachineConfiguration(team, pipeline, stage)
-        sqs_config = SQSConfiguration(team, pipeline, stage)
-        dlq_interface = SQSInterface(sqs_config.get_stage_dlq_name)
 
-        messages = dlq_interface.receive_messages(1)
+        client = DataLakeClient(team=team, pipeline=pipeline, stage=stage)
+
+        messages = client.sqs.receive_messages(1, client.sqs.stage_dlq_url)
         if not messages:
-            logger.info("No messages found in {}".format(sqs_config.get_stage_dlq_name))
+            logger.info("No messages found in DLQ")
             return
 
         logger.info("Received {} messages".format(len(messages)))
@@ -28,7 +25,7 @@ def lambda_handler(event, context):
             logger.info("Starting State Machine Execution")
             if isinstance(message["Body"], str):
                 response = json.loads(message["Body"])
-            StatesInterface().run_state_machine(state_config.get_stage_state_machine_arn, response)
+            client.states.run_state_machine(client.states.state_machine_arn, response)
             logger.info("Redrive message succeeded")
     except Exception as e:
         logger.error("Fatal error", exc_info=True)

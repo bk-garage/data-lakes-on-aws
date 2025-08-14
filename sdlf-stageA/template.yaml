@@ -408,24 +408,6 @@ Resources:
       Timeout: 300
       Role: !GetAtt rRoleLambdaExecutionRoutingStep.Arn
 
-  rLambdaStep1:
-    Type: AWS::Serverless::Function
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: W58
-            reason: Permissions to write CloudWatch Logs are granted by rLambdaCommonPolicy
-    Properties:
-      CodeUri: ./lambda/stage-a-preupdate-metadata/src
-      FunctionName: !Sub sdlf-${pTeamName}-${pPipeline}-preupdate-${pStageName}
-      Description: Pre-Update the metadata in the DynamoDB Catalog table
-      Environment:
-        Variables:
-          STAGE_TRANSFORM_LAMBDA: !GetAtt rLambdaStep2.Arn
-      MemorySize: 128
-      Timeout: 300
-      Role: !GetAtt rRoleLambdaExecutionMetadataStep.Arn
-
   rLambdaStep2:
     Type: AWS::Serverless::Function
     Metadata:
@@ -440,21 +422,6 @@ Resources:
       MemorySize: 1536
       Timeout: 600
       Role: !GetAtt rRoleLambdaExecutionProcessingStep.Arn
-
-  rLambdaStep3:
-    Type: AWS::Serverless::Function
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: W58
-            reason: Permissions to write CloudWatch Logs are granted by rLambdaCommonPolicy
-    Properties:
-      CodeUri: ./lambda/stage-a-postupdate-metadata/src
-      FunctionName: !Sub sdlf-${pTeamName}-${pPipeline}-postupdate-${pStageName}
-      Description: Post-Update the metadata in the DynamoDB Catalog table
-      MemorySize: 256
-      Timeout: 300
-      Role: !GetAtt rRoleLambdaExecutionMetadataStep.Arn
 
   rLambdaErrorStep:
     Type: AWS::Serverless::Function
@@ -526,24 +493,6 @@ Resources:
       RoleArn: !Ref pKibanaStreamRole
       FilterPattern: "[log_type, log_timestamp, log_id, log_message]"
 
-  rLambdaStep1LogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${rLambdaStep1}
-      RetentionInDays: !Ref pCloudWatchLogsRetentionInDays
-      KmsKeyId: !Sub "{{resolve:ssm:/SDLF/KMS/${pTeamName}/InfraKeyId}}"
-
-  rUpdateSubscriptionFilterStep1:
-    Type: AWS::Logs::SubscriptionFilter
-    Condition: DeployElasticSearch
-    Properties:
-      LogGroupName: !Ref rLambdaStep1LogGroup
-      DestinationArn: !Ref pKibanaStream
-      RoleArn: !Ref pKibanaStreamRole
-      FilterPattern: "[log_type, log_timestamp, log_id, log_message]"
-
   rLambdaStep2LogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
@@ -558,24 +507,6 @@ Resources:
     Condition: DeployElasticSearch
     Properties:
       LogGroupName: !Ref rLambdaStep2LogGroup
-      DestinationArn: !Ref pKibanaStream
-      RoleArn: !Ref pKibanaStreamRole
-      FilterPattern: "[log_type, log_timestamp, log_id, log_message]"
-
-  rLambdaStep3LogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${rLambdaStep3}
-      RetentionInDays: !Ref pCloudWatchLogsRetentionInDays
-      KmsKeyId: !Sub "{{resolve:ssm:/SDLF/KMS/${pTeamName}/InfraKeyId}}"
-
-  rUpdateSubscriptionFilterStep3:
-    Type: AWS::Logs::SubscriptionFilter
-    Condition: DeployElasticSearch
-    Properties:
-      LogGroupName: !Ref rLambdaStep3LogGroup
       DestinationArn: !Ref pKibanaStream
       RoleArn: !Ref pKibanaStreamRole
       FilterPattern: "[log_type, log_timestamp, log_id, log_message]"
@@ -661,8 +592,7 @@ Resources:
       Name: !Sub sdlf-${pTeamName}-${pPipeline}-sm-${pStageName}
       DefinitionUri: ./state-machine/stage-a.asl.json
       DefinitionSubstitutions:
-        lStep1: !GetAtt rLambdaStep1.Arn
-        lStep3: !GetAtt rLambdaStep3.Arn
+        lStep2: !GetAtt rLambdaStep2.Arn
         lError: !GetAtt rLambdaErrorStep.Arn
       Role: !GetAtt rStatesExecutionRole.Arn
       Tracing:

@@ -1,9 +1,8 @@
 import json
 import os
 
+from datalake_library import DataLakeClient
 from datalake_library.commons import init_logger
-from datalake_library.configuration.resource_configs import StateMachineConfiguration
-from datalake_library.interfaces.states_interface import StatesInterface
 
 logger = init_logger(__name__)
 
@@ -35,10 +34,8 @@ def lambda_handler(event, context):
                 "env": env,
             }
 
-            state_config = StateMachineConfiguration(team, pipeline, pipeline_stage)
-            StatesInterface().run_state_machine(
-                state_config.get_stage_state_machine_arn, json.dumps(event_with_pipeline_details)
-            )
+            client = DataLakeClient(team=team, pipeline=pipeline, stage=pipeline_stage)
+            client.states.run_state_machine(client.states.state_machine_arn, event_with_pipeline_details)
     except Exception as e:
         logger.error("Fatal error", exc_info=True)
         raise e

@@ -1,22 +1,21 @@
 import json
-import os
 from datetime import date, datetime
 
-import boto3
-from botocore.client import Config
-
-from ..commons import init_logger
+from .base_interface import BaseInterface
 
 
-class StatesInterface:
-    def __init__(self, log_level=None, states_client=None):
-        self.log_level = log_level or os.getenv("LOG_LEVEL", "INFO")
-        self._logger = init_logger(__name__, self.log_level)
-        stepfunctions_endpoint_url = "https://states." + os.getenv("AWS_REGION") + ".amazonaws.com"
-        session_config = Config(user_agent="awssdlf/2.11.0")
-        self._states_client = states_client or boto3.client(
-            "stepfunctions", endpoint_url=stepfunctions_endpoint_url, config=session_config
-        )
+class StatesInterface(BaseInterface):
+    def __init__(self, team=None, dataset=None, pipeline=None, stage=None, log_level=None, session=None):
+        super().__init__(team, dataset, pipeline, stage, log_level, session)
+
+    def _initialize_client(self):
+        """Initialize Step Functions client"""
+        self.stepfunctions = self.session.client("stepfunctions", config=self.session_config)
+
+    def _load_config(self):
+        """Load Step Functions-specific configuration from SSM"""
+        if self.team and self.stage and self.pipeline:
+            self.state_machine_arn = self._get_ssm_parameter(f"/SDLF/SM/{self.team}/{self.pipeline}{self.stage}SM")
 
     @staticmethod
     def json_serial(obj):
@@ -25,21 +24,7 @@ class StatesInterface:
             return obj.isoformat()
         raise TypeError("Type %s not serializable" % type(obj))
 
-    def get_all_step_functions(self):
-        self._logger.info("obtaining a list of all step functions")
-        pages = self._states_client.get_paginator("list_state_machines").paginate()
-        step_functions = []
-        for result in pages:
-            step_functions.extend(result["stateMachines"])
-        return step_functions
-
     def run_state_machine(self, machine_arn, message):
-        self._logger.info("running state machine with arn {}".format(machine_arn))
-        return self._states_client.start_execution(
+        return self.stepfunctions.start_execution(
             stateMachineArn=machine_arn, input=json.dumps(message, default=self.json_serial)
         )
-
-    def describe_state_execution(self, execution_arn):
-        self._logger.info("describing {}".format(execution_arn))
-        response = self._states_client.describe_execution(executionArn=execution_arn)
-        return response["status"]

@@ -1,48 +1,59 @@
 import math
-import os
 import uuid
 
-import boto3
-from botocore.client import Config
-from botocore.exceptions import ClientError
-
-from ..commons import init_logger
+from .base_interface import BaseInterface
 
 
-class SQSInterface:
-    def __init__(self, queue_name, log_level=None, sqs_client=None):
-        self.log_level = log_level or os.getenv("LOG_LEVEL", "INFO")
-        self._logger = init_logger(__name__, self.log_level)
-        sqs_endpoint_url = "https://sqs." + os.getenv("AWS_REGION") + ".amazonaws.com"
-        session_config = Config(user_agent="awssdlf/2.11.0")
-        self._sqs_client = sqs_client or boto3.client("sqs", endpoint_url=sqs_endpoint_url, config=session_config)
+class SQSInterface(BaseInterface):
+    def __init__(self, team=None, dataset=None, pipeline=None, stage=None, log_level=None, session=None):
+        super().__init__(team, dataset, pipeline, stage, log_level, session)
 
-        self._message_queue = self._sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
+    def _initialize_client(self):
+        """Initialize SQS client"""
+        self.sqs = self.session.client("sqs", config=self.session_config)
 
-    def receive_messages(self, max_num_messages=1):
-        messages = self._sqs_client.receive_message(
-            QueueUrl=self._message_queue, MaxNumberOfMessages=max_num_messages, WaitTimeSeconds=1
-        )["Messages"]
+    def _load_config(self):
+        """Load SQS-specific configuration from SSM"""
+        if self.team and self.stage and self.pipeline:
+            self.stage_queue = self._get_ssm_parameter(f"/SDLF/SQS/{self.team}/{self.pipeline}{self.stage}Queue")
+            self.stage_dlq = self._get_ssm_parameter(f"/SDLF/SQS/{self.team}/{self.pipeline}{self.stage}DLQ")
+
+    @property
+    def stage_queue_url(self):
+        """Get stage queue URL"""
+        return self.sqs.get_queue_url(QueueName=self.stage_queue)["QueueUrl"]
+
+    @property
+    def stage_dlq_url(self):
+        """Get stage DLQ URL"""
+        return self.sqs.get_queue_url(QueueName=self.stage_dlq)["QueueUrl"]
+
+    def receive_messages(self, max_num_messages=1, queue_url=None):
+        queue_url = queue_url or self.stage_queue_url
+        messages = self.sqs.receive_message(
+            QueueUrl=queue_url, MaxNumberOfMessages=max_num_messages, WaitTimeSeconds=1
+        ).get("Messages", [])
         for message in messages:
-            self._sqs_client.delete_message(QueueUrl=self._message_queue, ReceiptHandle=message["ReceiptHandle"])
+            self.sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message["ReceiptHandle"])
         return messages
 
-    def receive_min_max_messages(self, min_items_process, max_items_process):
+    def receive_min_max_messages(self, min_items_process=1, max_items_process=100, queue_url=None):
         """Gets max_items_process messages from an SQS queue.
         :param min_items_process: Minimum number of items to process.
         :param max_items_process: Maximum number of items to process.
         :return messages obtained
         """
         messages = []
+        queue_url = queue_url or self.stage_queue_url
         num_messages_queue = int(
-            self._sqs_client.get_queue_attributes(
-                QueueUrl=self._message_queue, AttributeNames=["ApproximateNumberOfMessages"]
-            )["Attributes"]["ApproximateNumberOfMessages"]
+            self.sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=["ApproximateNumberOfMessages"])[
+                "Attributes"
+            ]["ApproximateNumberOfMessages"]
         )
 
         # If not enough items to process, break with no messages
         if (num_messages_queue == 0) or (min_items_process > num_messages_queue):
-            self._logger.info("Not enough messages - exiting")
+            self.logger.info("Not enough messages - exiting")
             return messages
 
         # Only pull batch sizes of max_batch_size
@@ -60,32 +71,8 @@ class SQSInterface:
                 break
         return messages
 
-    def send_message_to_fifo_queue(self, message, group_id):
-        try:
-            self._sqs_client.send_message(
-                QueueUrl=self._message_queue,
-                MessageBody=message,
-                MessageGroupId=group_id,
-                MessageDeduplicationId=str(uuid.uuid1()),
-            )
-        except ClientError as e:
-            self._logger.error("Received error: %s", e, exc_info=True)
-            raise e
-
-    def send_batch_messages_to_fifo_queue(self, messages, batch_size, group_id):
-        try:
-            chunks = [messages[x : x + batch_size] for x in range(0, len(messages), batch_size)]
-            for chunk in chunks:
-                entries = []
-                for x in chunk:
-                    entry = {
-                        "Id": str(uuid.uuid1()),
-                        "MessageBody": str(x),
-                        "MessageGroupId": group_id,
-                        "MessageDeduplicationId": str(uuid.uuid1()),
-                    }
-                    entries.append(entry)
-                self._sqs_client.send_message_batch(QueueUrl=self._message_queue, Entries=entries)
-        except ClientError as e:
-            self._logger.error("Received error: %s", e, exc_info=True)
-            raise e
+    def send_message_to_fifo_queue(self, message, group_id, queue_url=None):
+        queue_url = queue_url or self.stage_queue_url
+        self.sqs.send_message(
+            QueueUrl=queue_url, MessageBody=message, MessageGroupId=group_id, MessageDeduplicationId=str(uuid.uuid4())
+        )

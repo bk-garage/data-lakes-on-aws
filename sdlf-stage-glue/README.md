@@ -1,3 +1,4 @@
+# [**DEPRECATED**]
 # sdlf-stage-glue (sdlf-stageB)
 
 !!! note

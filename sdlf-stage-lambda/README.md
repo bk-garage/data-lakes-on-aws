@@ -1,3 +1,4 @@
+# [**DEPRECATED**]
 # sdlf-stage-lambda (sdlf-stageA)
 
 !!! note
